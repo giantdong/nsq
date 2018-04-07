@@ -19,14 +19,14 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/nsqio/nsq/internal/clusterinfo"
-	"github.com/nsqio/nsq/internal/dirlock"
-	"github.com/nsqio/nsq/internal/http_api"
-	"github.com/nsqio/nsq/internal/lg"
-	"github.com/nsqio/nsq/internal/protocol"
-	"github.com/nsqio/nsq/internal/statsd"
-	"github.com/nsqio/nsq/internal/util"
-	"github.com/nsqio/nsq/internal/version"
+	"github.com/kulv2012/nsq/internal/clusterinfo"
+	"github.com/kulv2012/nsq/internal/dirlock"
+	"github.com/kulv2012/nsq/internal/http_api"
+	"github.com/kulv2012/nsq/internal/lg"
+	"github.com/kulv2012/nsq/internal/protocol"
+	"github.com/kulv2012/nsq/internal/statsd"
+	"github.com/kulv2012/nsq/internal/util"
+	"github.com/kulv2012/nsq/internal/version"
 )
 
 const (

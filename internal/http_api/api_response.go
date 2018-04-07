@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/julienschmidt/httprouter"
-	"github.com/nsqio/nsq/internal/lg"
+	"github.com/kulv2012/nsq/internal/lg"
 )
 
 type Decorator func(APIHandler) APIHandler

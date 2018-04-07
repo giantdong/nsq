@@ -5,7 +5,7 @@ import (
 	"math"
 	"time"
 
-	"github.com/nsqio/nsq/internal/statsd"
+	"github.com/kulv2012/nsq/internal/statsd"
 )
 
 type Uint64Slice []uint64

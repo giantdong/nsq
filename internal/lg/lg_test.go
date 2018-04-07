@@ -5,7 +5,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/nsqio/nsq/internal/test"
+	"github.com/kulv2012/nsq/internal/test"
 )
 
 type options struct {

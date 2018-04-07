@@ -13,9 +13,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nsqio/nsq/internal/http_api"
-	"github.com/nsqio/nsq/internal/test"
-	"github.com/nsqio/nsq/nsqlookupd"
+	"github.com/kulv2012/nsq/internal/http_api"
+	"github.com/kulv2012/nsq/internal/test"
+	"github.com/kulv2012/nsq/nsqlookupd"
 )
 
 const (

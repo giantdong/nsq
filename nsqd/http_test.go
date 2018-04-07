@@ -18,9 +18,9 @@ import (
 	"strings"
 
 	"github.com/nsqio/go-nsq"
-	"github.com/nsqio/nsq/internal/test"
-	"github.com/nsqio/nsq/internal/version"
-	"github.com/nsqio/nsq/nsqlookupd"
+	"github.com/kulv2012/nsq/internal/test"
+	"github.com/kulv2012/nsq/internal/version"
+	"github.com/kulv2012/nsq/nsqlookupd"
 )
 
 type ErrMessage struct {

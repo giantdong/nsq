@@ -1,4 +1,4 @@
-PREFIX=/usr/local
+PREFIX=/home/wuhaiwen/nsq
 DESTDIR=
 GOFLAGS=
 BINDIR=${PREFIX}/bin

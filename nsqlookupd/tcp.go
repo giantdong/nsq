@@ -4,7 +4,7 @@ import (
 	"io"
 	"net"
 
-	"github.com/nsqio/nsq/internal/protocol"
+	"github.com/kulv2012/nsq/internal/protocol"
 )
 
 type tcpServer struct {

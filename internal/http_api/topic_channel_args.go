@@ -3,7 +3,7 @@ package http_api
 import (
 	"errors"
 
-	"github.com/nsqio/nsq/internal/protocol"
+	"github.com/kulv2012/nsq/internal/protocol"
 )
 
 type getter interface {
