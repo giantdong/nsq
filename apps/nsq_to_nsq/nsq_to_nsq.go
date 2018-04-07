@@ -18,7 +18,7 @@ import (
 
 	"github.com/bitly/go-hostpool"
 	"github.com/bitly/timer_metrics"
-	"github.com/nsqio/go-nsq"
+	"github.com/kulv2012/go-nsq"
 	"github.com/kulv2012/nsq/internal/app"
 	"github.com/kulv2012/nsq/internal/protocol"
 	"github.com/kulv2012/nsq/internal/version"

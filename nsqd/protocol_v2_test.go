@@ -25,7 +25,7 @@ import (
 	"time"
 
 	"github.com/golang/snappy"
-	"github.com/nsqio/go-nsq"
+	"github.com/kulv2012/go-nsq"
 	"github.com/kulv2012/nsq/internal/protocol"
 	"github.com/kulv2012/nsq/internal/test"
 )

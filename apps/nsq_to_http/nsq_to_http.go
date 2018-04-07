@@ -22,7 +22,7 @@ import (
 
 	"github.com/bitly/go-hostpool"
 	"github.com/bitly/timer_metrics"
-	"github.com/nsqio/go-nsq"
+	"github.com/kulv2012/go-nsq"
 	"github.com/kulv2012/nsq/internal/app"
 	"github.com/kulv2012/nsq/internal/http_api"
 	"github.com/kulv2012/nsq/internal/version"

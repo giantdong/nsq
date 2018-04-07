@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/nsqio/go-nsq"
+	"github.com/kulv2012/go-nsq"
 	"github.com/kulv2012/nsq/internal/clusterinfo"
 	"github.com/kulv2012/nsq/internal/http_api"
 )

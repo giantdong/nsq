@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/nsqio/go-nsq"
+	"github.com/kulv2012/go-nsq"
 )
 
 type FileLogger struct {
