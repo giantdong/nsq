@@ -39,6 +39,7 @@ func (p *protocolV2) IOLoop(conn net.Conn) error {
 	var zeroTime time.Time
 
 	clientID := atomic.AddInt64(&p.ctx.nsqd.clientIDSequence, 1)
+	//创建client结构
 	client := newClientV2(clientID, conn, p.ctx)
 
 	// synchronize the startup of messagePump in order
@@ -46,6 +47,8 @@ func (p *protocolV2) IOLoop(conn net.Conn) error {
 	// goroutine local state derived from client attributes
 	// and avoid a potential race with IDENTIFY (where a client
 	// could have changed or disabled said attributes)
+	//上面注释说了，这里做同步的原因在于，需要确保messagePump 里面的初始化完成在进行下面的操作，
+	//因为当前客户端在后面可能修改相关的数据。
 	messagePumpStartedChan := make(chan bool)
 	go p.messagePump(client, messagePumpStartedChan)
 	<-messagePumpStartedChan
@@ -210,6 +213,7 @@ func (p *protocolV2) messagePump(client *clientV2, startedChan chan bool) {
 
 	subEventChan := client.SubEventChan
 	identifyEventChan := client.IdentifyEventChan
+	//创建各个超时时间，定时器
 	outputBufferTicker := time.NewTicker(client.OutputBufferTimeout)
 	heartbeatTicker := time.NewTicker(client.HeartbeatInterval)
 	heartbeatChan := heartbeatTicker.C
@@ -225,16 +229,19 @@ func (p *protocolV2) messagePump(client *clientV2, startedChan chan bool) {
 
 	// signal to the goroutine that started the messagePump
 	// that we've started up
+	//通知调用者，我初始化，拷贝channel完成
 	close(startedChan)
 
 	for {
 		if subChannel == nil || !client.IsReadyForMessages() {
+			//为什么是not ready ？意思是客户端不准备接收数据了，那么下面进行强制刷新发送数据
 			// the client is not ready to receive messages...
 			memoryMsgChan = nil
 			backendMsgChan = nil
 			flusherChan = nil
 			// force flush
 			client.writeLock.Lock()
+			//就是调用连接的Writer.Flush() 进行刷数据
 			err = client.Flush()
 			client.writeLock.Unlock()
 			if err != nil {
@@ -257,6 +264,7 @@ func (p *protocolV2) messagePump(client *clientV2, startedChan chan bool) {
 
 		select {
 		case <-flusherChan:
+			//到了client.OutputBufferTimeout的时间点后，开始flush数据到客户端
 			// if this case wins, we're either starved
 			// or we won the race between other channels...
 			// in either case, force flush
@@ -293,6 +301,7 @@ func (p *protocolV2) messagePump(client *clientV2, startedChan chan bool) {
 
 			msgTimeout = identifyData.MsgTimeout
 		case <-heartbeatChan:
+			//心跳到了，发送心跳数据
 			err = p.Send(client, frameTypeResponse, heartbeatBytes)
 			if err != nil {
 				goto exit

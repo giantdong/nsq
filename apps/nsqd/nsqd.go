@@ -197,6 +197,7 @@ func (p *program) Init(env svc.Environment) error {
 }
 
 func (p *program) Start() error {
+	//解析配置，默认 < 配置文件 <命令行配置, 最后使用options包合并配置到cfg
 	opts := nsqd.NewOptions()
 
 	flagSet := nsqdFlagSet(opts)
@@ -204,7 +205,7 @@ func (p *program) Start() error {
 
 	rand.Seed(time.Now().UTC().UnixNano())
 
-	if flagSet.Lookup("version").Value.(flag.Getter).Get().(bool) {
+	if flagSet.Lookup("version").Value.(flag.Getter).Get().(bool) {//转换为flag.Getter接口 
 		fmt.Println(version.String("nsqd"))
 		os.Exit(0)
 	}
@@ -220,19 +221,22 @@ func (p *program) Start() error {
 	cfg.Validate()
 
 	options.Resolve(opts, flagSet, cfg)
-	nsqd := nsqd.New(opts)
+	nsqd := nsqd.New(opts)//调用new函数创建一个nsqd结构，传入上面解析的配置信息. 初始化NSQD结构，加锁数据目录，初始化https配置
 
-	err := nsqd.LoadMetadata()
+	err := nsqd.LoadMetadata()//加载数据, 初始化n.topics结构
 	if err != nil {
 		log.Fatalf("ERROR: %s", err.Error())
 	}
+	//持久化当前的topic,channel 数据结构，不涉及到数据不封顶持久化. 写入临时文件后改名
+	//怎么刚刚启动就要持久化呢？原因是？ 搞回滚用? 清理之前的回滚信息? 比如之前有失败执行的，后来改了要求的
 	err = nsqd.PersistMetadata()
 	if err != nil {
 		log.Fatalf("ERROR: failed to persist metadata - %s", err.Error())
 	}
-	nsqd.Main()
+	nsqd.Main()//开始监听服务
 
 	p.nsqd = nsqd
+	//start返回后会进入到svc的代码里面进行等待，监听信号量如果用户杀进程，就调用下面的stop
 	return nil
 }
 

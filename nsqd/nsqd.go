@@ -72,6 +72,7 @@ type NSQD struct {
 }
 
 func New(opts *Options) *NSQD {
+	//初始化NSQD结构，加锁数据目录，初始化https配置
 	dataPath := opts.DataPath
 	if opts.DataPath == "" {
 		cwd, _ := os.Getwd()
@@ -102,6 +103,7 @@ func New(opts *Options) *NSQD {
 		os.Exit(1)
 	}
 
+	//调用syscall.Flock锁住这个目录，避免设置同一个data目录重复运行
 	err = n.dl.Lock()
 	if err != nil {
 		n.logf(LOG_FATAL, "--data-path=%s in use (possibly by another instance of nsqd)", dataPath)
@@ -133,6 +135,7 @@ func New(opts *Options) *NSQD {
 		opts.StatsdPrefix = prefixWithHost
 	}
 
+	//下面进行https相关的初始化配置
 	if opts.TLSClientAuthPolicy != "" && opts.TLSRequired == TLSNotRequired {
 		opts.TLSRequired = TLSRequired
 	}
@@ -220,11 +223,14 @@ func (n *NSQD) GetStartTime() time.Time {
 }
 
 func (n *NSQD) Main() {
+	//开启各个端口监听客户端请求，创建各项后台携程进行处理
 	var httpListener net.Listener
 	var httpsListener net.Listener
 
+	//初始化一个context的指针，里面就
 	ctx := &context{n}
 
+	//创建TCP协议的监听句柄监听请求
 	tcpListener, err := net.Listen("tcp", n.getOpts().TCPAddress)
 	if err != nil {
 		n.logf(LOG_FATAL, "listen (%s) failed - %s", n.getOpts().TCPAddress, err)
@@ -233,11 +239,15 @@ func (n *NSQD) Main() {
 	n.Lock()
 	n.tcpListener = tcpListener
 	n.Unlock()
+	//tcpServer是个接口，里面有个context的指针，之外就是Handle函数了，函数读取协议版本然后调用prot.IOLoop进行消息读取和解析
+	//处理流程在internal/protocol/tcp_server.go 
 	tcpServer := &tcpServer{ctx: ctx}
 	n.waitGroup.Wrap(func() {
+		//循环accept客户端请求，然后创建协程进行消息读写循环prot.IOLoop(clientConn)
 		protocol.TCPServer(n.tcpListener, tcpServer, n.logf)
 	})
 
+	//创建HTTPS协议的监听句柄监听请求
 	if n.tlsConfig != nil && n.getOpts().HTTPSAddress != "" {
 		httpsListener, err = tls.Listen("tcp", n.getOpts().HTTPSAddress, n.tlsConfig)
 		if err != nil {
@@ -247,11 +257,16 @@ func (n *NSQD) Main() {
 		n.Lock()
 		n.httpsListener = httpsListener
 		n.Unlock()
+		//创建http接口httpServer类，用来接收https协议的请求
 		httpsServer := newHTTPServer(ctx, true, true)
 		n.waitGroup.Wrap(func() {
+			//开始监听处理请求, http_api.serve 在internal/http_api/http_server.go 
 			http_api.Serve(n.httpsListener, httpsServer, "HTTPS", n.logf)
 		})
 	}
+
+	//下面常规初始化http链接，开始监听请求
+	//创建HTTP协议的监听句柄监听请求, 0.0.0.0:4151
 	httpListener, err = net.Listen("tcp", n.getOpts().HTTPAddress)
 	if err != nil {
 		n.logf(LOG_FATAL, "listen (%s) failed - %s", n.getOpts().HTTPAddress, err)
@@ -260,18 +275,27 @@ func (n *NSQD) Main() {
 	n.Lock()
 	n.httpListener = httpListener
 	n.Unlock()
+	//https跟http的处理函数是一样的，这是https的listener不一样,也就是底层网络处理函数不一样
 	httpServer := newHTTPServer(ctx, false, n.getOpts().TLSRequired == TLSRequired)
 	n.waitGroup.Wrap(func() {
+		//开始监听请求, httpListener是连接通道，httpServer 是处理相关的函数
 		http_api.Serve(n.httpListener, httpServer, "HTTP", n.logf)
 	})
 
+	//队列scan扫描协程
 	n.waitGroup.Wrap(func() { n.queueScanLoop() })
+	//lookup的查找协程
 	n.waitGroup.Wrap(func() { n.lookupLoop() })
+	//如果配置了状态地址，开启状态协程
 	if n.getOpts().StatsdAddress != "" {
 		n.waitGroup.Wrap(func() { n.statsdLoop() })
 	}
+	//至此main函数结束，上面基本上开启了tcp，https,http协程开始不断accept客户端请求并且进行处理
+	//main结束后返回到program.Start， 后者退出后返回到svc的代码里面进行等待，监听信号量如果用户杀进程, 就调用program.Stop函数
+	//stop函数实际上调用到了p.nsqd.Exit()
 }
 
+//下面用了struct的tag 功能
 type meta struct {
 	Topics []struct {
 		Name     string `json:"name"`
@@ -316,13 +340,16 @@ func writeSyncFile(fn string, data []byte) error {
 }
 
 func (n *NSQD) LoadMetadata() error {
+	//program.Start,  topic有变动时都会调用这里来持久化调用这里
 	atomic.StoreInt32(&n.isLoading, 1)
 	defer atomic.StoreInt32(&n.isLoading, 0)
 
 	fn := newMetadataFile(n.getOpts())
 	// old metadata filename with ID, maintained in parallel to enable roll-back
+	//old文件似乎是个软连接
 	fnID := oldMetadataFile(n.getOpts())
 
+	//读取当前的nsqd.dat文件内容
 	data, err := readOrEmpty(fn)
 	if err != nil {
 		return err
@@ -347,21 +374,25 @@ func (n *NSQD) LoadMetadata() error {
 	}
 
 	var m meta
+	//将读取到的文件内容转为json使用，方便
 	err = json.Unmarshal(data, &m)
 	if err != nil {
 		return fmt.Errorf("failed to parse metadata in %s - %s", fn, err)
 	}
 
+	//下面先循环topic然后递归扫描其channel列表
 	for _, t := range m.Topics {
 		if !protocol.IsValidTopicName(t.Name) {
 			n.logf(LOG_WARN, "skipping creation of invalid topic %s", t.Name)
 			continue
 		}
+		//创建或者获取一个topic
 		topic := n.GetTopic(t.Name)
 		if t.Paused {
 			topic.Pause()
 		}
 
+		//再递归其channel
 		for _, c := range t.Channels {
 			if !protocol.IsValidChannelName(c.Name) {
 				n.logf(LOG_WARN, "skipping creation of invalid channel %s", c.Name)
@@ -377,9 +408,13 @@ func (n *NSQD) LoadMetadata() error {
 }
 
 func (n *NSQD) PersistMetadata() error {
+	//持久化当前的topic,channel 数据结构，不涉及到数据不封顶持久化. 写入临时文件后改名
+	//exit退出时也会写入本地元数据
 	// persist metadata about what topics/channels we have, across restarts
+	//这个文件就是nsqd.data
 	fileName := newMetadataFile(n.getOpts())
 	// old metadata filename with ID, maintained in parallel to enable roll-back
+	//这文件就是nsqd.$ID.data的软连接， 用来做回滚操作的，具体后面了解一下
 	fileNameID := oldMetadataFile(n.getOpts())
 
 	n.logf(LOG_INFO, "NSQ: persisting topic/channel metadata to %s", fileName)
@@ -414,17 +449,21 @@ func (n *NSQD) PersistMetadata() error {
 	js["version"] = version.Binary
 	js["topics"] = topics
 
-	data, err := json.Marshal(&js)
+	data, err := json.Marshal(&js)//序列号成json数据
 	if err != nil {
 		return err
 	}
 
+	
+	//下面写了2次文件，第一次是json 数据文件，写好后重命名；
+	//先写入临时文件，然后做一次重命名，这样避免中间出问题只写了一部分数据，rename是原子操作,所以安全
 	tmpFileName := fmt.Sprintf("%s.%d.tmp", fileName, rand.Int())
 
 	err = writeSyncFile(tmpFileName, data)
 	if err != nil {
 		return err
 	}
+	//原子操作重命名文件
 	err = os.Rename(tmpFileName, fileName)
 	if err != nil {
 		return err
@@ -433,15 +472,17 @@ func (n *NSQD) PersistMetadata() error {
 
 	stat, err := os.Lstat(fileNameID)
 	if err == nil && stat.Mode()&os.ModeSymlink != 0 {
+		//如果有符号链接，那OK，不用管了
 		return nil
 	}
 
 	// if no symlink (yet), race condition:
 	// crash right here may cause next startup to see metadata conflict and abort
-
+	//接下来建立软连接到fileNameID， 如果是非windows系统，直接时文件建立软连接到fileName，然后 nsqd.%d.dat 指向了刚刚的临时文件，实际上都指向了nsqd.dat
 	tmpFileNameID := fmt.Sprintf("%s.%d.tmp", fileNameID, rand.Int())
 
 	if runtime.GOOS != "windows" {
+		//又搞个临时软连接，映射到nsqd.data
 		err = os.Symlink(fileName, tmpFileNameID)
 	} else {
 		// on Windows need Administrator privs to Symlink
@@ -451,7 +492,7 @@ func (n *NSQD) PersistMetadata() error {
 	if err != nil {
 		return err
 	}
-
+	//临时软连接改为正常软连接, 这里不直接Symlink 的原因是？ 为了能跟windows统一？
 	err = os.Rename(tmpFileNameID, fileNameID)
 	if err != nil {
 		return err
@@ -462,6 +503,9 @@ func (n *NSQD) PersistMetadata() error {
 }
 
 func (n *NSQD) Exit() {
+	//main结束后返回到program.Start， 后者退出后返回到svc的代码里面进行等待，监听信号量如果用户杀进程, 就调用program.Stop函数
+	//program调用这里退出程序，需要关闭监听句柄和其他 句柄，然后持久化数据
+	//下面一个个停止相关的句柄，停止接听请求
 	if n.tcpListener != nil {
 		n.tcpListener.Close()
 	}
@@ -475,6 +519,7 @@ func (n *NSQD) Exit() {
 	}
 
 	n.Lock()
+	//加锁状态下持久化channel状态到磁盘
 	err := n.PersistMetadata()
 	if err != nil {
 		n.logf(LOG_ERROR, "failed to persist metadata - %s", err)
@@ -485,7 +530,9 @@ func (n *NSQD) Exit() {
 	}
 	n.Unlock()
 
+	//给所有携程发送退出信号
 	close(n.exitChan)
+	//等待所有等在这个waitgroup的携程退出
 	n.waitGroup.Wait()
 
 	n.dl.Unlock()
@@ -495,6 +542,7 @@ func (n *NSQD) Exit() {
 // to return a pointer to a Topic object (potentially new)
 func (n *NSQD) GetTopic(topicName string) *Topic {
 	// most likely, we already have this topic, so try read lock first.
+	//如上面所说，大部分情况都是存在topic的，这优化值得
 	n.RLock()
 	t, ok := n.topicMap[topicName]
 	n.RUnlock()
@@ -502,6 +550,7 @@ func (n *NSQD) GetTopic(topicName string) *Topic {
 		return t
 	}
 
+	//不存在这topc，得new一个了，还有种情况，就在刚才那一瞬间，有其他协程进来了，他new了一个，所以获取锁后还得判断一下是否存在
 	n.Lock()
 
 	t, ok = n.topicMap[topicName]
@@ -512,6 +561,7 @@ func (n *NSQD) GetTopic(topicName string) *Topic {
 	deleteCallback := func(t *Topic) {
 		n.DeleteExistingTopic(t.name)
 	}
+	//创建一个topic结构，并且里面初始化好diskqueue, 加入到NSQD的topicmap里面
 	t = NewTopic(topicName, &context{n}, deleteCallback)
 	n.topicMap[topicName] = t
 

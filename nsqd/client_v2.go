@@ -59,17 +59,18 @@ type clientV2 struct {
 	metaLock  sync.RWMutex
 
 	ID        int64
+	//对应的NSQD结构
 	ctx       *context
 	UserAgent string
 
-	// original connection
+	// original connection, 对应的网路的连接结构，负责收发消息
 	net.Conn
 
 	// connections based on negotiated features
 	tlsConn     *tls.Conn
 	flateWriter *flate.Writer
 
-	// reading/writing interfaces
+	// reading/writing interfaces, 对应的Conn结构的读写接口
 	Reader *bufio.Reader
 	Writer *bufio.Writer
 
@@ -112,11 +113,12 @@ func newClientV2(id int64, conn net.Conn, ctx *context) *clientV2 {
 		identifier, _, _ = net.SplitHostPort(conn.RemoteAddr().String())
 	}
 
+	//初始化一个客户端练级的client结构，里面设置相关的网络句柄，以及读写缓存大小，超时时间和心跳间隔
 	c := &clientV2{
 		ID:  id,
 		ctx: ctx,
 
-		Conn: conn,
+		Conn: conn, //对应的底层网络结构
 
 		Reader: bufio.NewReaderSize(conn, defaultBufferSize),
 		Writer: bufio.NewWriterSize(conn, defaultBufferSize),
