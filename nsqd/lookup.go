@@ -92,7 +92,7 @@ func (n *NSQD) lookupLoop() {
 					n.logf(LOG_ERROR, "LOOKUPD(%s): %s - %s", lookupPeer, cmd, err)
 				}
 			}
-		case val := <-n.notifyChan:
+		case val := <-n.notifyChan: //通知chanel， 一般有topic，channel上的增删的时候会写入管道, 进而通知其他lookup去处理
 			var cmd *nsq.Command
 			var branch string
 
@@ -103,7 +103,7 @@ func (n *NSQD) lookupLoop() {
 				channel := val.(*Channel)
 				if channel.Exiting() == true {
 					cmd = nsq.UnRegister(channel.topicName, channel.name)
-				} else {
+				} else {//生成对应的指令
 					cmd = nsq.Register(channel.topicName, channel.name)
 				}
 			case *Topic:
@@ -117,6 +117,7 @@ func (n *NSQD) lookupLoop() {
 				}
 			}
 
+			//循环在所有的lookup上执行这条指令
 			for _, lookupPeer := range lookupPeers {
 				n.logf(LOG_INFO, "LOOKUPD(%s): %s %s", lookupPeer, branch, cmd)
 				_, err := lookupPeer.Command(cmd)

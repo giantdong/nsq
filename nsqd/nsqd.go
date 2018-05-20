@@ -386,7 +386,7 @@ func (n *NSQD) LoadMetadata() error {
 			n.logf(LOG_WARN, "skipping creation of invalid topic %s", t.Name)
 			continue
 		}
-		//创建或者获取一个topic
+		//创建或者获取一个topic,如果没有就创建他，并且开启消息协程
 		topic := n.GetTopic(t.Name)
 		if t.Paused {
 			topic.Pause()
@@ -398,6 +398,7 @@ func (n *NSQD) LoadMetadata() error {
 				n.logf(LOG_WARN, "skipping creation of invalid channel %s", c.Name)
 				continue
 			}
+			///获取topic的channel，如果之前没有是新建的，则通知channelUpdateChan 去刷新订阅状态
 			channel := topic.GetChannel(c.Name)
 			if c.Paused {
 				channel.Pause()
@@ -550,18 +551,20 @@ func (n *NSQD) GetTopic(topicName string) *Topic {
 		return t
 	}
 
-	//不存在这topc，得new一个了，还有种情况，就在刚才那一瞬间，有其他协程进来了，他new了一个，所以获取锁后还得判断一下是否存在
+	//不存在这topc，得new一个了,  所以直接加锁了整个nsqd结构
 	n.Lock()
 
 	t, ok = n.topicMap[topicName]
-	if ok {
+	if ok { //还有种情况，就在刚才那一瞬间，有其他协程进来了，他new了一个，所以获取锁后还得判断一下是否存在
 		n.Unlock()
 		return t
 	}
 	deleteCallback := func(t *Topic) {
+		//topic的删除函数
 		n.DeleteExistingTopic(t.name)
 	}
 	//创建一个topic结构，并且里面初始化好diskqueue, 加入到NSQD的topicmap里面
+	//创建topic的时候，会开启消息循环
 	t = NewTopic(topicName, &context{n}, deleteCallback)
 	n.topicMap[topicName] = t
 
@@ -569,9 +572,14 @@ func (n *NSQD) GetTopic(topicName string) *Topic {
 
 	// release our global nsqd lock, and switch to a more granular topic lock while we init our
 	// channels from lookupd. This blocks concurrent PutMessages to this topic.
+	//可以理解为先加锁topic，这个时候会加不上吗？
+	//不会，因为我们在获取topic的时候，会先加nsqd的读锁获取topic，然后再第二步进行PutMessage或者DeleteExistingChannel的时候，会加RLock或者Lock；
+	//因此，由于本函数开头已经先加了n.Lock()大锁，所以上面第二步不可能进入，因此下面可以直接加t.Lock而不用担心死锁
+	//这里相当于已经创建了topic到nsqd的topicMap，接下来的事情不涉及到nsqd，而只是topic内部的事情了，所以换一把小一点的锁
 	t.Lock()
 	n.Unlock()
 
+	//lookupd里面存储所有之前的channel信息，所以这里加载一下，这样消息能不丢
 	// if using lookupd, make a blocking call to get the topics, and immediately create them.
 	// this makes sure that any message received is buffered to the right channels
 	lookupdHTTPAddrs := n.lookupdHTTPAddrs()
@@ -581,11 +589,14 @@ func (n *NSQD) GetTopic(topicName string) *Topic {
 			n.logf(LOG_WARN, "failed to query nsqlookupd for channels to pre-create for topic %s - %s", t.name, err)
 		}
 		for _, channelName := range channelNames {
+			//临时topic不需要预先创建，用到的时候再创建就行
 			if strings.HasSuffix(channelName, "#ephemeral") {
 				// we don't want to pre-create ephemeral channels
 				// because there isn't a client connected
 				continue
 			}
+			//预先创建一个channel，原因呢？为了让消息能够及时的入队.
+			//比如，我这个nsq重启了，那么重启的这时刻，需要加载曾经的所有channel，以备每一个channel的消息不丢。不然只能等着对方create了，不方便
 			t.getOrCreateChannel(channelName)
 		}
 	} else if len(n.getOpts().NSQLookupdTCPAddresses) > 0 {
@@ -620,6 +631,7 @@ func (n *NSQD) GetExistingTopic(topicName string) (*Topic, error) {
 
 // DeleteExistingTopic removes a topic only if it exists
 func (n *NSQD) DeleteExistingTopic(topicName string) error {
+	//删除topic的函数，分2步走，第一步先处理数据结构，最后再删除topicMap的映射
 	n.RLock()
 	topic, ok := n.topicMap[topicName]
 	if !ok {
@@ -637,6 +649,7 @@ func (n *NSQD) DeleteExistingTopic(topicName string) error {
 	topic.Delete()
 
 	n.Lock()
+	//真正删除topic在topicMap中的位置
 	delete(n.topicMap, topicName)
 	n.Unlock()
 
@@ -644,6 +657,7 @@ func (n *NSQD) DeleteExistingTopic(topicName string) error {
 }
 
 func (n *NSQD) Notify(v interface{}) {
+	//用来通知notifyChan，有新的事件发生了，比如有topic或者channel增删， 这样在notifyChan放入一个元素后，会由lookupLoop 进行监听，后者会通知到lookupd进行处理。
 	// since the in-memory metadata is incomplete,
 	// should not persist metadata while loading it.
 	// nsqd will call `PersistMetadata` it after loading

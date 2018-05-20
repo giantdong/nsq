@@ -326,6 +326,7 @@ func (p *protocolV2) messagePump(client *clientV2, startedChan chan bool) {
 			}
 			flushed = false
 		case msg := <-memoryMsgChan:
+			//监听这个channel的请求，如果有消息到来，被触发后发送给客户端
 			if sampleRate > 0 && rand.Int31n(100) > sampleRate {
 				continue
 			}
