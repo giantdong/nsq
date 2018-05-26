@@ -47,12 +47,12 @@ type Channel struct {
 
 	backend BackendQueue
 
-	memoryMsgChan chan *Message
+	memoryMsgChan chan *Message //channel的消息管道，topic发送消息会放入这里面，所有SUB的客户端会用后台协程订阅到这个管道后面, 1:n
 	exitFlag      int32
 	exitMutex     sync.RWMutex
 
 	// state tracking
-	clients        map[int64]Consumer
+	clients        map[int64]Consumer  //所有订阅的topic都会记录到这里
 	paused         int32
 	ephemeral      bool
 	deleteCallback func(*Channel)
@@ -62,9 +62,15 @@ type Channel struct {
 	e2eProcessingLatencyStream *quantile.Quantile
 
 	// TODO: these can be DRYd up
+	//延迟投递消息，消息体会放入deferredPQ，并且由后台的queueScanLoop协程来扫描消息，
+	//将过期的消息照常使用c.put(msg)发送出去
 	deferredMessages map[MessageID]*pqueue.Item
-	deferredPQ       pqueue.PriorityQueue
+	deferredPQ       pqueue.PriorityQueue //延迟投递消息的优先级队列
 	deferredMutex    sync.Mutex
+
+	//正在发送中的消息记录，直到收到客户端的FIN才会删除，否则timeout到来会重传消息的.
+	//这里应用层有个坑，如果程序处理延迟了，那么可能重复投递，那怎么办, 
+	//应用层得注意这个，设置了timeout就得接受有重传的存在
 	inFlightMessages map[MessageID]*Message
 	inFlightPQ       inFlightPqueue
 	inFlightMutex    sync.Mutex
@@ -119,6 +125,7 @@ func NewChannel(topicName string, channelName string, ctx *context,
 }
 
 func (c *Channel) initPQ() {
+	//重新初始化各个优先级队列，一个发送中的队列，一个延迟队列
 	pqSize := int(math.Max(1, float64(c.ctx.nsqd.getOpts().MemQueueSize)/10))
 
 	c.inFlightMutex.Lock()
@@ -193,7 +200,7 @@ func (c *Channel) Empty() error {
 	}
 
 	for {
-		select {
+		select {//循环清空掉所有的channel上的消息
 		case <-c.memoryMsgChan:
 		default:
 			goto finish
@@ -208,7 +215,7 @@ finish:
 // it does not drain inflight/deferred because it is only called in Close()
 func (c *Channel) flush() error {
 	var msgBuf bytes.Buffer
-
+//将所有内存队列的消息刷到磁盘上面。注意不会处理延迟消息，因为后者还没有生效呢，不能放入
 	if len(c.memoryMsgChan) > 0 || len(c.inFlightMessages) > 0 || len(c.deferredMessages) > 0 {
 		c.ctx.nsqd.logf(LOG_INFO, "CHANNEL(%s): flushing %d memory %d in-flight %d deferred messages to backend",
 			c.name, len(c.memoryMsgChan), len(c.inFlightMessages), len(c.deferredMessages))
@@ -217,6 +224,7 @@ func (c *Channel) flush() error {
 	for {
 		select {
 		case msg := <-c.memoryMsgChan:
+			//刷到磁盘上
 			err := writeMessageToBackend(&msgBuf, msg, c.backend)
 			if err != nil {
 				c.ctx.nsqd.logf(LOG_ERROR, "failed to write message to backend - %s", err)
@@ -327,6 +335,7 @@ func (c *Channel) put(m *Message) error {
 }
 
 func (c *Channel) PutMessageDeferred(msg *Message, timeout time.Duration) {
+	//延迟投递消息，也算一个messageCount。 参数timeout是延迟秒数
 	atomic.AddUint64(&c.messageCount, 1)
 	c.StartDeferredTimeout(msg, timeout)
 }
@@ -357,6 +366,7 @@ func (c *Channel) TouchMessage(clientID int64, id MessageID, clientMsgTimeout ti
 
 // FinishMessage successfully discards an in-flight message
 func (c *Channel) FinishMessage(clientID int64, id MessageID) error {
+	//收到FIN命令结束倒计时，完美投递
 	msg, err := c.popInFlightMessage(clientID, id)
 	if err != nil {
 		return err
@@ -428,6 +438,9 @@ func (c *Channel) RemoveClient(clientID int64) {
 }
 
 func (c *Channel) StartInFlightTimeout(msg *Message, clientID int64, timeout time.Duration) error {
+	//这个函数会在客户端的protocolV2) messagePump 循环体里面，当某个客户端连接得到内存或者磁盘消息后，
+	//在发送前会设置这个inflight队列，用来记录当前正在发送的消息，如果超时时间到来还没有确认收到，
+	//那么会有queueScanLoop循环去扫描，并且重发这条消息, 最后会调用到processInFlightQueue
 	now := time.Now()
 	msg.clientID = clientID
 	msg.deliveryTS = now
@@ -441,8 +454,10 @@ func (c *Channel) StartInFlightTimeout(msg *Message, clientID int64, timeout tim
 }
 
 func (c *Channel) StartDeferredTimeout(msg *Message, timeout time.Duration) error {
+	//延迟投递消息，计算绝对时间absTs, 然后新建一个pqueue.Item放到优先级队列里面，优先级就是absTs，按照时间顺序排列
 	absTs := time.Now().Add(timeout).UnixNano()
 	item := &pqueue.Item{Value: msg, Priority: absTs}
+	//下面就是记录一下deferredMessages[id] = item，房子重复延迟投递
 	err := c.pushDeferredMessage(item)
 	if err != nil {
 		return err
@@ -466,6 +481,7 @@ func (c *Channel) pushInFlightMessage(msg *Message) error {
 
 // popInFlightMessage atomically removes a message from the in-flight dictionary
 func (c *Channel) popInFlightMessage(clientID int64, id MessageID) (*Message, error) {
+	//把倒计时消息移除
 	c.inFlightMutex.Lock()
 	msg, ok := c.inFlightMessages[id]
 	if !ok {
@@ -503,7 +519,7 @@ func (c *Channel) pushDeferredMessage(item *pqueue.Item) error {
 	// TODO: these map lookups are costly
 	id := item.Value.(*Message).ID
 	_, ok := c.deferredMessages[id]
-	if ok {
+	if ok {//查一下这个msgid是不是已经defer了
 		c.deferredMutex.Unlock()
 		return errors.New("ID already deferred")
 	}
@@ -526,12 +542,17 @@ func (c *Channel) popDeferredMessage(id MessageID) (*pqueue.Item, error) {
 }
 
 func (c *Channel) addToDeferredPQ(item *pqueue.Item) {
+	//放入到优先级队列里面. 那么这条消息怎么触发呢？
+	//在main函数里面，会启动queueScanLoop协程，
+	//后者会定时启动扫描任务扫描所有channels,
+	//然后去处理这个优先级队列，调用processDeferredQueue 函数，如果有到期的消息就触发他
 	c.deferredMutex.Lock()
 	heap.Push(&c.deferredPQ, item)
 	c.deferredMutex.Unlock()
 }
 
 func (c *Channel) processDeferredQueue(t int64) bool {
+	//被queueScanLoop调用来扫描是否有到期的延迟投递消息 
 	c.exitMutex.RLock()
 	defer c.exitMutex.RUnlock()
 
@@ -541,7 +562,11 @@ func (c *Channel) processDeferredQueue(t int64) bool {
 
 	dirty := false
 	for {
+		//循环处理到期消息，这里如果有大量消息没有处理，就会死循环一直到处理完毕为止
+		//目测不是太好，如果业务设置某个时间到期的消息，基本上nsqd应该会卡的不行了
+		//会不断在这里处理这些消息，当然对于服务是还能响应的
 		c.deferredMutex.Lock()
+		//如果有取一条的到期消息
 		item, _ := c.deferredPQ.PeekAndShift(t)
 		c.deferredMutex.Unlock()
 
@@ -551,10 +576,12 @@ func (c *Channel) processDeferredQueue(t int64) bool {
 		dirty = true
 
 		msg := item.Value.(*Message)
+		//从c.deferredMessages 删除
 		_, err := c.popDeferredMessage(msg.ID)
 		if err != nil {
 			goto exit
 		}
+		//调用常规发送消息的put函数去照常投递消息
 		c.put(msg)
 	}
 
@@ -563,6 +590,8 @@ exit:
 }
 
 func (c *Channel) processInFlightQueue(t int64) bool {
+	//每次发送客户端消息的时候，会调用StartInFlightTimeout来记录当前的infight消息，以备进行重传
+	//如果客户端收到消息，会发送FIN 命令来结束消息倒计时，不用重传了
 	c.exitMutex.RLock()
 	defer c.exitMutex.RUnlock()
 

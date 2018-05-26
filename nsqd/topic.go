@@ -246,14 +246,15 @@ func (t *Topic) messagePump() {
 	}
 	t.RUnlock()
 
-	if len(chans) > 0 {
+	if len(chans) > 0 {//topic当前有channel，那接下来监听内存和磁盘channel的消息。
+		//这里想到GetTopic后面去获取lookupdHTTPAddrs的原因，其实是为了尽量别丢消息
 		memoryMsgChan = t.memoryMsgChan
 		backendChan = t.backend.ReadChan()
 	}
 
 	for {
 		select {
-		case msg = <-memoryMsgChan:
+		case msg = <-memoryMsgChan://内存队列
 		case buf = <-backendChan:
 			msg, err = decodeMessage(buf)
 			if err != nil {
@@ -280,6 +281,7 @@ func (t *Topic) messagePump() {
 			}
 			continue
 		case pause := <-t.pauseChan:
+			//挂住channel
 			if pause || len(chans) == 0 {
 				memoryMsgChan = nil
 				backendChan = nil
@@ -300,14 +302,17 @@ func (t *Topic) messagePump() {
 			// fastpath to avoid copy if its the first channel
 			// (the topic already created the first copy)
 			if i > 0 {
+				//如上面注释所说，对于第一个channel，消息体直接复用了，之后的才生成新的
 				chanMsg = NewMessage(msg.ID, msg.Body)
 				chanMsg.Timestamp = msg.Timestamp
 				chanMsg.deferred = msg.deferred
 			}
 			if chanMsg.deferred != 0 {
+				//如果是defered延迟投递的消息，那么放入特殊的队列
 				channel.PutMessageDeferred(chanMsg, chanMsg.deferred)
 				continue
 			}
+			//立即投递到channel里面
 			err := channel.PutMessage(chanMsg)
 			if err != nil {
 				t.ctx.nsqd.logf(LOG_ERROR,

@@ -216,12 +216,19 @@ func (s *httpServer) doPUB(w http.ResponseWriter, req *http.Request, ps httprout
 		if err != nil {
 			return nil, http_api.Err{400, "INVALID_DEFER"}
 		}
+		//defer延迟消息, 会放入每一个channel的defered优先级队列里面
 		deferred = time.Duration(di) * time.Millisecond
 		if deferred < 0 || deferred > s.ctx.nsqd.getOpts().MaxReqTimeout {
 			return nil, http_api.Err{400, "INVALID_DEFER"}
 		}
 	}
 
+	//将消息调用PutMessage发送到topic对应的管道里面，
+	//这样这个topic对应的messagePump会收到消息而一个个调用chanel.PutMessage, \
+	//如果是defer消息，则调用PutMessageDeferred进行处理
+	//那么有疑问哈：为什么defer逻辑要在channel上处理，而不是topic上面呢？
+	//这个不是多浪费资源去存储，去扫描吗？反正他们的过期时间都是一样的
+	//提了个问题在https://github.com/nsqio/nsq/issues/1037
 	msg := NewMessage(topic.GenerateID(), body)
 	msg.deferred = deferred
 	err = topic.PutMessage(msg)

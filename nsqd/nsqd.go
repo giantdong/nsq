@@ -739,6 +739,7 @@ func (n *NSQD) queueScanWorker(workCh chan *Channel, responseCh chan bool, close
 			if c.processDeferredQueue(now) {
 				dirty = true
 			}
+			//有处理过消息
 			responseCh <- dirty
 		case <-closeCh:
 			return
@@ -760,6 +761,7 @@ func (n *NSQD) queueScanWorker(workCh chan *Channel, responseCh chan bool, close
 // If QueueScanDirtyPercent (default: 25%) of the selected channels were dirty,
 // the loop continues without sleep.
 func (n *NSQD) queueScanLoop() {
+	//延迟投递和inflight队列扫描协程，动态创建协程处理
 	workCh := make(chan *Channel, n.getOpts().QueueScanSelectionCount)
 	responseCh := make(chan bool, n.getOpts().QueueScanSelectionCount)
 	closeCh := make(chan int)

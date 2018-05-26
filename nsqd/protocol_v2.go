@@ -319,6 +319,7 @@ func (p *protocolV2) messagePump(client *clientV2, startedChan chan bool) {
 				goto exit
 			}
 		case b := <-backendMsgChan:
+			//有磁盘消息到来
 			if sampleRate > 0 && rand.Int31n(100) > sampleRate {
 				continue
 			}
@@ -690,6 +691,7 @@ func (p *protocolV2) RDY(client *clientV2, params [][]byte) ([]byte, error) {
 }
 
 func (p *protocolV2) FIN(client *clientV2, params [][]byte) ([]byte, error) {
+	//客户端发送FIN 某条消息来FinishMessage结束消息倒计时，成功投递
 	state := atomic.LoadInt32(&client.State)
 	if state != stateSubscribed && state != stateClosing {
 		return nil, protocol.NewFatalClientErr(nil, "E_INVALID", "cannot FIN in current state")
