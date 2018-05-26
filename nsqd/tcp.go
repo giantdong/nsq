@@ -45,7 +45,7 @@ func (p *tcpServer) Handle(clientConn net.Conn) {
 		return
 	}
 
-	//进入后面的读取消息逻辑, 并且进入循环处理
+	//进入后面的读取消息逻辑, 并且进入循环处理. 本函数是在协程中处理的，一个客户端一个协程
 	err = prot.IOLoop(clientConn)
 	if err != nil {
 		p.ctx.nsqd.logf(LOG_ERROR, "client(%s) - %s", clientConn.RemoteAddr(), err)

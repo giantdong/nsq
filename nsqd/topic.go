@@ -177,6 +177,7 @@ func (t *Topic) DeleteExistingChannel(channelName string) error {
 func (t *Topic) PutMessage(m *Message) error {
 	t.RLock()
 	defer t.RUnlock()
+	//简单看一下是不是我们正在退出状态，如果是就直接返回
 	if atomic.LoadInt32(&t.exitFlag) == 1 {
 		return errors.New("exiting")
 	}
@@ -209,7 +210,7 @@ func (t *Topic) put(m *Message) error {
 	select {
 		//将这条消息直接塞入内存管道
 	case t.memoryMsgChan <- m:
-	default://如果内存消息管道满了，那么就放入到后面的持久化存储里面
+	default://如果内存消息管道满了(memoryMsgChan的容量由 getOpts().MemQueueSize设置)，那么就放入到后面的持久化存储里面
 		b := bufferPoolGet()
 		err := writeMessageToBackend(b, m, t.backend)
 		bufferPoolPut(b)

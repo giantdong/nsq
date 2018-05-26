@@ -564,7 +564,7 @@ func (n *NSQD) GetTopic(topicName string) *Topic {
 		n.DeleteExistingTopic(t.name)
 	}
 	//创建一个topic结构，并且里面初始化好diskqueue, 加入到NSQD的topicmap里面
-	//创建topic的时候，会开启消息循环
+	//创建topic的时候，会开启消息协程
 	t = NewTopic(topicName, &context{n}, deleteCallback)
 	n.topicMap[topicName] = t
 
@@ -612,6 +612,7 @@ func (n *NSQD) GetTopic(topicName string) *Topic {
 	//
 	// update messagePump state
 	select {
+		//然后往管道channelUpdateChan里面塞入一个事件，通知topic的后台消息协程去处理channel的变动事件。
 	case t.channelUpdateChan <- 1:
 	case <-t.exitChan:
 	}

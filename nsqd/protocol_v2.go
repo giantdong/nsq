@@ -34,6 +34,8 @@ type protocolV2 struct {
 }
 
 func (p *protocolV2) IOLoop(conn net.Conn) error {
+	//nsqd/tcp.go 的tcpServer.Handle 在读取前面4个字节的版本后调用这里，开始去读取客户端请求然后处理的过程，
+	//本函数已经在一个客户端会
 	var err error
 	var line []byte
 	var zeroTime time.Time
@@ -49,10 +51,12 @@ func (p *protocolV2) IOLoop(conn net.Conn) error {
 	// could have changed or disabled said attributes)
 	//上面注释说了，这里做同步的原因在于，需要确保messagePump 里面的初始化完成在进行下面的操作，
 	//因为当前客户端在后面可能修改相关的数据。
+	//消息的订阅发布工作在辅助的messagePump携程处理，下面创建之
 	messagePumpStartedChan := make(chan bool)
 	go p.messagePump(client, messagePumpStartedChan)
 	<-messagePumpStartedChan
 
+	//开始循环读取客户端请求然后解析参数，进行处理, 这个工作在客户端的主协程处理
 	for {
 		if client.HeartbeatInterval > 0 {
 			client.SetReadDeadline(time.Now().Add(client.HeartbeatInterval * 2))
@@ -83,6 +87,7 @@ func (p *protocolV2) IOLoop(conn net.Conn) error {
 		p.ctx.nsqd.logf(LOG_DEBUG, "PROTOCOL(V2): [%s] %s", client, params)
 
 		var response []byte
+		//执行这条命令
 		response, err = p.Exec(client, params)
 		if err != nil {
 			ctx := ""
@@ -105,6 +110,7 @@ func (p *protocolV2) IOLoop(conn net.Conn) error {
 		}
 
 		if response != nil {
+			//执行成功，返回客户端对应的response
 			err = p.Send(client, frameTypeResponse, response)
 			if err != nil {
 				err = fmt.Errorf("failed to send response - %s", err)
@@ -117,6 +123,7 @@ func (p *protocolV2) IOLoop(conn net.Conn) error {
 	conn.Close()
 	close(client.ExitChan)
 	if client.Channel != nil {
+		//从channel对应的clients数组泏
 		client.Channel.RemoveClient(client.ID)
 	}
 
@@ -201,6 +208,7 @@ func (p *protocolV2) Exec(client *clientV2, params [][]byte) ([]byte, error) {
 }
 
 func (p *protocolV2) messagePump(client *clientV2, startedChan chan bool) {
+	//客户端连接上来后，先调用这里开启消息循环，监听消息. 随后调用者会进行读取消息的操作
 	var err error
 	var memoryMsgChan chan *Message
 	var backendMsgChan chan []byte
@@ -211,6 +219,7 @@ func (p *protocolV2) messagePump(client *clientV2, startedChan chan bool) {
 	var flusherChan <-chan time.Time
 	var sampleRate int32
 
+	//subEventChan 是客户端有订阅行为的通知channel，订阅一次后会重置为null。
 	subEventChan := client.SubEventChan
 	identifyEventChan := client.IdentifyEventChan
 	//创建各个超时时间，定时器
@@ -229,9 +238,9 @@ func (p *protocolV2) messagePump(client *clientV2, startedChan chan bool) {
 
 	// signal to the goroutine that started the messagePump
 	// that we've started up
-	//通知调用者，我初始化，拷贝channel完成
+	//通知调用者，我初始化，拷贝channel完成.
 	close(startedChan)
-
+	//下面开始循环处理消息，比如订阅管道通知，
 	for {
 		if subChannel == nil || !client.IsReadyForMessages() {
 			//为什么是not ready ？意思是客户端不准备接收数据了，那么下面进行强制刷新发送数据
@@ -277,6 +286,9 @@ func (p *protocolV2) messagePump(client *clientV2, startedChan chan bool) {
 			flushed = true
 		case <-client.ReadyStateChan:
 		case subChannel = <-subEventChan:
+			//当客户端发送了SUB操作后，会通过这个管道，塞入我所应该订阅的topic，然后这里就得到了对应应该订阅的channel，
+			//然后就在上面的循环中设置对应的memoryMsgChan 或者backend.ReadChan() 进行监听
+			//所以nsq是通过前台跟客户端交互协程通知后台消息循环协程，你需要订阅一个新的channel并且关注其事件。 这么来订阅的
 			// you can't SUB anymore
 			subEventChan = nil
 		case identifyData := <-identifyEventChan:

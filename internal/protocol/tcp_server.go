@@ -32,7 +32,7 @@ func TCPServer(listener net.Listener, handler TCPHandler, logf lg.AppLogFunc) {
 			}
 			break
 		}
-		//在协程中处理这一个客户端请求, 直至结束连接
+		//在协程中处理这一个客户端请求, 直至结束连接. 所以go是一个客户端连接一个协程处理
 		go handler.Handle(clientConn)
 	}
 

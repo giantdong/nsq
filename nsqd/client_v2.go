@@ -93,7 +93,7 @@ type clientV2 struct {
 	SampleRate int32
 
 	IdentifyEventChan chan identifyEvent
-	SubEventChan      chan *Channel
+	SubEventChan      chan *Channel //客户端的订阅状态变化的channel， 其实一个客户端只能sub一个topic，订阅后会删除这个channel并且客户端会订阅到对应的topic上。之后就不再监听这个topic了
 
 	TLS     int32
 	Snappy  int32
