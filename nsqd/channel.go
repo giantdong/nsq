@@ -45,17 +45,17 @@ type Channel struct {
 	name      string
 	ctx       *context
 
-	backend BackendQueue
+	backend BackendQueue //磁盘持久化存储
 
 	memoryMsgChan chan *Message //channel的消息管道，topic发送消息会放入这里面，所有SUB的客户端会用后台协程订阅到这个管道后面, 1:n
 	exitFlag      int32
 	exitMutex     sync.RWMutex
 
 	// state tracking
-	clients        map[int64]Consumer  //所有订阅的topic都会记录到这里
+	clients        map[int64]Consumer  //所有订阅的topic都会记录到这里, 用来在关闭的时候清理client，以及根据clientid找client 
 	paused         int32
 	ephemeral      bool
-	deleteCallback func(*Channel)
+	deleteCallback func(*Channel) //实际上就是DeleteExistingChannel 
 	deleter        sync.Once
 
 	// Stats tracking
@@ -394,6 +394,7 @@ func (c *Channel) RequeueMessage(clientID int64, id MessageID, timeout time.Dura
 	atomic.AddUint64(&c.requeueCount, 1)
 
 	if timeout == 0 {
+		//timeout为0，立即投递，否则当延迟投递消息处理
 		c.exitMutex.RLock()
 		if c.Exiting() {
 			c.exitMutex.RUnlock()
@@ -433,6 +434,8 @@ func (c *Channel) RemoveClient(clientID int64) {
 	delete(c.clients, clientID)
 
 	if len(c.clients) == 0 && c.ephemeral == true {
+		//所有client都退出了，如果是临时的ephemeral topic，就会删除这个channel，
+		// 实际上就是DeleteExistingChannel
 		go c.deleter.Do(func() { c.deleteCallback(c) })
 	}
 }
@@ -442,6 +445,8 @@ func (c *Channel) StartInFlightTimeout(msg *Message, clientID int64, timeout tim
 	//在发送前会设置这个inflight队列，用来记录当前正在发送的消息，如果超时时间到来还没有确认收到，
 	//那么会有queueScanLoop循环去扫描，并且重发这条消息, 最后会调用到processInFlightQueue
 	now := time.Now()
+	//下面改clientID会不会有问题？不会，因为一个消息只可能给一个客户端，topic在发送消息到channel的时候
+	//第0个channel会复用当初的msg结构，之后的会创建一个新的
 	msg.clientID = clientID
 	msg.deliveryTS = now
 	msg.pri = now.Add(timeout).UnixNano()

@@ -181,11 +181,11 @@ func (p *protocolV2) Exec(client *clientV2, params [][]byte) ([]byte, error) {
 		return nil, err
 	}
 	switch {
-	case bytes.Equal(params[0], []byte("FIN")):
+	case bytes.Equal(params[0], []byte("FIN"))://已接收到消息，完成
 		return p.FIN(client, params)
 	case bytes.Equal(params[0], []byte("RDY")):
 		return p.RDY(client, params)
-	case bytes.Equal(params[0], []byte("REQ")):
+	case bytes.Equal(params[0], []byte("REQ"))://重新投递到本channel中
 		return p.REQ(client, params)
 	case bytes.Equal(params[0], []byte("PUB")):
 		return p.PUB(client, params)
@@ -601,6 +601,7 @@ func (p *protocolV2) CheckAuth(client *clientV2, cmd, topicName, channelName str
 }
 
 func (p *protocolV2) SUB(client *clientV2, params [][]byte) ([]byte, error) {
+	//消费者订阅某个topic的channel
 	if atomic.LoadInt32(&client.State) != stateInit {
 		return nil, protocol.NewFatalClientErr(nil, "E_INVALID", "cannot SUB in current state")
 	}
@@ -634,6 +635,7 @@ func (p *protocolV2) SUB(client *clientV2, params [][]byte) ([]byte, error) {
 	// Avoid adding a client to an ephemeral channel / topic which has started exiting.
 	var channel *Channel
 	for {
+		//获取topic和channel，将本客户的加入其client队列
 		topic := p.ctx.nsqd.GetTopic(topicName)
 		channel = topic.GetChannel(channelName)
 		channel.AddClient(client.ID, client)
@@ -646,8 +648,11 @@ func (p *protocolV2) SUB(client *clientV2, params [][]byte) ([]byte, error) {
 		break
 	}
 	atomic.StoreInt32(&client.State, stateSubscribed)
+	//下面这行很重要，设置本client说订阅的channel，这样接下来的SubEventChan就会由当前clienid开启的后台协程来订阅这个channel的消息。
+	//而这个channel，就是topic->channel结构，里面能找到对应channel的订阅管道
 	client.Channel = channel
 	// update message pump
+	//通知后台订阅协程来订阅消息,包括内存管道和磁盘
 	client.SubEventChan <- channel
 
 	return okBytes, nil
@@ -706,18 +711,22 @@ func (p *protocolV2) FIN(client *clientV2, params [][]byte) ([]byte, error) {
 		return nil, protocol.NewFatalClientErr(nil, "E_INVALID", err.Error())
 	}
 
+	//结束消息倒计时，投递完成
 	err = client.Channel.FinishMessage(client.ID, *id)
 	if err != nil {
 		return nil, protocol.NewClientErr(err, "E_FIN_FAILED",
 			fmt.Sprintf("FIN %s failed %s", *id, err.Error()))
 	}
 
+	//统计消息发送次数
 	client.FinishedMessage()
 
 	return nil, nil
 }
 
 func (p *protocolV2) REQ(client *clientV2, params [][]byte) ([]byte, error) {
+	//重新将消息放入队列发送出去,  这里注意，这消息不一定是给我自己了，但是一定是给本channel的，而不是topic级别的
+	//也就是说，其他channel不受影响。也不保证本client能收到消息
 	state := atomic.LoadInt32(&client.State)
 	if state != stateSubscribed && state != stateClosing {
 		return nil, protocol.NewFatalClientErr(nil, "E_INVALID", "cannot REQ in current state")
@@ -753,6 +762,7 @@ func (p *protocolV2) REQ(client *clientV2, params [][]byte) ([]byte, error) {
 		timeoutDuration = clampedTimeout
 	}
 
+	//相当于重新发送消息，defer或者立即发送
 	err = client.Channel.RequeueMessage(client.ID, *id, timeoutDuration)
 	if err != nil {
 		return nil, protocol.NewClientErr(err, "E_REQ_FAILED",
@@ -807,15 +817,18 @@ func (p *protocolV2) PUB(client *clientV2, params [][]byte) ([]byte, error) {
 	}
 
 	messageBody := make([]byte, bodyLen)
+	//真方便，直接一个ReadFull就行了，不用像C语言那也，自己处理是否读满的事情
 	_, err = io.ReadFull(client.Reader, messageBody)
 	if err != nil {
 		return nil, protocol.NewFatalClientErr(err, "E_BAD_MESSAGE", "PUB failed to read message body")
 	}
 
+	//检查是否有权限
 	if err := p.CheckAuth(client, "PUB", topicName, ""); err != nil {
 		return nil, err
 	}
 
+	//get一下topic，如果没有会自动创建，并且开启topic的消息循环，开始从lookupd同步消息
 	topic := p.ctx.nsqd.GetTopic(topicName)
 	msg := NewMessage(topic.GenerateID(), messageBody)
 	err = topic.PutMessage(msg)
