@@ -12,6 +12,8 @@ type tcpServer struct {
 }
 
 func (p *tcpServer) Handle(clientConn net.Conn) {
+	//如果有客户端连接，上层会创建一个协程，调用这里.
+	//本函数判断协议版本，之后就基本就调用了LookupProtocolV1::IOLoop
 	p.ctx.nsqlookupd.logf(LOG_INFO, "TCP: new client(%s)", clientConn.RemoteAddr())
 
 	// The client should initialize itself by sending a 4 byte sequence indicating

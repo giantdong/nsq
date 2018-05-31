@@ -229,6 +229,8 @@ func (s *httpServer) doPUB(w http.ResponseWriter, req *http.Request, ps httprout
 	//那么有疑问哈：为什么defer逻辑要在channel上处理，而不是topic上面呢？
 	//这个不是多浪费资源去存储，去扫描吗？反正他们的过期时间都是一样的
 	//提了个问题在https://github.com/nsqio/nsq/issues/1037
+	//OK , 作者回复了，就是因为简单。但其实从性能上考虑：
+	//如果你有很多个channel， 经常发送的defer消息，那么放到topic上还是更好的
 	msg := NewMessage(topic.GenerateID(), body)
 	msg.deferred = deferred
 	err = topic.PutMessage(msg)

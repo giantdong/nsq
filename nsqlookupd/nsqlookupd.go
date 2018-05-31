@@ -23,6 +23,7 @@ type NSQLookupd struct {
 }
 
 func New(opts *Options) *NSQLookupd {
+	//初始化日志，new一个NSQLookupd返回，没干别的
 	if opts.Logger == nil {
 		opts.Logger = log.New(os.Stderr, opts.LogPrefix, log.Ldate|log.Ltime|log.Lmicroseconds)
 	}
@@ -43,6 +44,7 @@ func New(opts *Options) *NSQLookupd {
 }
 
 func (l *NSQLookupd) Main() {
+	//apps/nsqlookupd/nsqlookupd.go 调用这里
 	ctx := &Context{l}
 
 	tcpListener, err := net.Listen("tcp", l.opts.TCPAddress)
@@ -53,6 +55,7 @@ func (l *NSQLookupd) Main() {
 	l.Lock()
 	l.tcpListener = tcpListener
 	l.Unlock()
+	//tcp协议处理函数其实是LookupProtocolV1::IOLoop,  支持IDENTIFY， REGISTER, UNREGISTER 操作
 	tcpServer := &tcpServer{ctx: ctx}
 	l.waitGroup.Wrap(func() {
 		protocol.TCPServer(tcpListener, tcpServer, l.logf)
@@ -66,6 +69,7 @@ func (l *NSQLookupd) Main() {
 	l.Lock()
 	l.httpListener = httpListener
 	l.Unlock()
+	//http协议要复杂很多
 	httpServer := newHTTPServer(ctx)
 	l.waitGroup.Wrap(func() {
 		http_api.Serve(httpListener, httpServer, "HTTP", l.logf)
