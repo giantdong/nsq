@@ -102,6 +102,7 @@ func (s *httpServer) doChannels(w http.ResponseWriter, req *http.Request, ps htt
 }
 
 func (s *httpServer) doLookup(w http.ResponseWriter, req *http.Request, ps httprouter.Params) (interface{}, error) {
+	//lookup命令会返回该topic对应的channel列表，以及都有哪些nsqd上面有这个topic 
 	reqParams, err := http_api.NewReqParams(req)
 	if err != nil {
 		return nil, http_api.Err{400, "INVALID_REQUEST"}
@@ -112,15 +113,20 @@ func (s *httpServer) doLookup(w http.ResponseWriter, req *http.Request, ps httpr
 		return nil, http_api.Err{400, "MISSING_ARG_TOPIC"}
 	}
 
+	//先查询map里面是否有对应topic的记录
 	registration := s.ctx.nsqlookupd.DB.FindRegistrations("topic", topicName, "")
 	if len(registration) == 0 {
 		return nil, http_api.Err{404, "TOPIC_NOT_FOUND"}
 	}
 
+	//得到所有的channel列表
 	channels := s.ctx.nsqlookupd.DB.FindRegistrations("channel", topicName, "*").SubKeys()
+	//得到 有这个topic的nsqd列表，后面需要去掉不活跃的机器
 	producers := s.ctx.nsqlookupd.DB.FindProducers("topic", topicName, "")
 	producers = producers.FilterByActive(s.ctx.nsqlookupd.opts.InactiveProducerTimeout,
 		s.ctx.nsqlookupd.opts.TombstoneLifetime)
+
+	//返回json字符串
 	return map[string]interface{}{
 		"channels":  channels,
 		"producers": producers.PeerInfo(),
@@ -128,6 +134,7 @@ func (s *httpServer) doLookup(w http.ResponseWriter, req *http.Request, ps httpr
 }
 
 func (s *httpServer) doCreateTopic(w http.ResponseWriter, req *http.Request, ps httprouter.Params) (interface{}, error) {
+	//创建一个topic， 只是简单的记录了一下topic信息，并且加到DB里面，对应的nsqd数组为空
 	reqParams, err := http_api.NewReqParams(req)
 	if err != nil {
 		return nil, http_api.Err{400, "INVALID_REQUEST"}

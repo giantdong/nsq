@@ -77,6 +77,7 @@ func (p *program) Start() error {
 	options.Resolve(opts, flagSet, cfg)
 	daemon := nsqlookupd.New(opts)
 
+	//调用业务的main函数，Main函数会创建协程进行处理, 立即返回
 	daemon.Main()
 	p.nsqlookupd = daemon
 	return nil

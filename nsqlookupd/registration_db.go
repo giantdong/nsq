@@ -9,7 +9,7 @@ import (
 
 type RegistrationDB struct {
 	sync.RWMutex
-	registrationMap map[Registration]Producers
+	registrationMap map[Registration]Producers  //map, 记录topic、channel 对应的 所有nsqd服务器信息
 }
 
 type Registration struct {
@@ -17,7 +17,7 @@ type Registration struct {
 	Key      string
 	SubKey   string
 }
-type Registrations []Registration
+type Registrations []Registration  //这是一个topic/channel的数组
 
 type PeerInfo struct {
 	lastUpdate       int64
@@ -31,12 +31,12 @@ type PeerInfo struct {
 }
 
 type Producer struct {
-	peerInfo     *PeerInfo
+	peerInfo     *PeerInfo   //nsqd服务器网络信息，端口等
 	tombstoned   bool
 	tombstonedAt time.Time
 }
 
-type Producers []*Producer
+type Producers []*Producer //指针数组
 
 func (p *Producer) String() string {
 	return fmt.Sprintf("%s [%d, %d]", p.peerInfo.BroadcastAddress, p.peerInfo.TCPPort, p.peerInfo.HTTPPort)
@@ -69,6 +69,7 @@ func (r *RegistrationDB) AddRegistration(k Registration) {
 
 // add a producer to a registration
 func (r *RegistrationDB) AddProducer(k Registration, p *Producer) bool {
+	//将一个nsqd加入到k参数指定的topic、channel映射表里面，先查是否已经在里面了，没有就加入
 	r.Lock()
 	defer r.Unlock()
 	producers := r.registrationMap[k]

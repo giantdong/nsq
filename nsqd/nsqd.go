@@ -669,6 +669,7 @@ func (n *NSQD) Notify(v interface{}) {
 		select {
 		case <-n.exitChan:
 		case n.notifyChan <- v:
+			//向notifyChan 写入这个事件。然后进行持久化。
 			if !persist {
 				return
 			}

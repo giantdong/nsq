@@ -117,6 +117,8 @@ func getTopicChan(command string, params []string) (string, string, error) {
 }
 
 func (p *LookupProtocolV1) REGISTER(client *ClientV1, reader *bufio.Reader, params []string) ([]byte, error) {
+	//nsqd发送注册登记指令REGISTER， 来通知lookup他新建了一个topic和channel
+	//nsqlookupd需要记录topic对应的nsqd列表，以备用来查询等
 	if client.peerInfo == nil {
 		return nil, protocol.NewFatalClientErr(nil, "E_INVALID", "client must IDENTIFY")
 	}
@@ -126,8 +128,9 @@ func (p *LookupProtocolV1) REGISTER(client *ClientV1, reader *bufio.Reader, para
 		return nil, err
 	}
 
-	if channel != "" {
+	if channel != "" {//如果有channel， 需要单独记录一下channel，因为topic和channel可以1:n的
 		key := Registration{"channel", topic, channel}
+		//调用AddProducer 将映射关系放入map里面
 		if p.ctx.nsqlookupd.DB.AddProducer(key, &Producer{peerInfo: client.peerInfo}) {
 			p.ctx.nsqlookupd.logf(LOG_INFO, "DB: client(%s) REGISTER category:%s key:%s subkey:%s",
 				client, "channel", topic, channel)
